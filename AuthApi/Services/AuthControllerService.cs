@@ -125,7 +125,7 @@ public class AuthControllerService : IAuthControllerService
     {
         return await RegisterUser(dto, "Receptionist");
     }
-    
+
     // ── Profile ───────────────────────────────────────────────────────────────
 
     public async Task<IActionResult> GetProfile(ClaimsPrincipal principal)
@@ -147,7 +147,66 @@ public class AuthControllerService : IAuthControllerService
             PhotoUrl = user.PhotoUrl
         });
     }
-    
+
+    // ── Upload Photo ──────────────────────────────────────────────────────────
+
+    public async Task<IActionResult> UploadPhoto(
+        ClaimsPrincipal principal,
+        IFormFile file
+    )
+    {
+        if (file == null || file.Length == 0)
+            return new BadRequestObjectResult("No file uploaded");
+
+        const string bucketName = "user-photos";
+
+        var exists = await _minio.BucketExistsAsync(
+            new BucketExistsArgs().WithBucket(bucketName)
+        );
+
+        if (!exists)
+        {
+            await _minio.MakeBucketAsync(
+                new MakeBucketArgs().WithBucket(bucketName)
+            );
+        }
+
+        var fileName = $"{Guid.NewGuid()}{Path.GetExtension(file.FileName)}";
+
+        using var stream = file.OpenReadStream();
+
+        await _minio.PutObjectAsync(
+            new PutObjectArgs()
+                .WithBucket(bucketName)
+                .WithObject(fileName)
+                .WithStreamData(stream)
+                .WithObjectSize(stream.Length)
+                .WithContentType(file.ContentType)
+        );
+
+        var url      = _configuration["Minio:EndpointOut"];
+        var photoUrl = $"http://{url}/{bucketName}/{fileName}";
+
+        var userId = principal.FindFirstValue(ClaimTypes.NameIdentifier);
+
+        if (string.IsNullOrWhiteSpace(userId))
+            return new UnauthorizedResult();
+
+        var user = await _userManager.FindByIdAsync(userId);
+
+        if (user == null)
+            return new NotFoundObjectResult("User not found");
+
+        user.PhotoUrl = photoUrl;
+
+        var result = await _userManager.UpdateAsync(user);
+
+        if (!result.Succeeded)
+            return new BadRequestObjectResult(result.Errors);
+
+        return new OkObjectResult(new { photoUrl = user.PhotoUrl });
+    }
+
     // ── Change Password ───────────────────────────────────────────────────────
 
     public async Task<IActionResult> ChangePassword(
@@ -176,7 +235,144 @@ public class AuthControllerService : IAuthControllerService
 
         return new OkObjectResult(new { message = "Password changed successfully" });
     }
-    
+
+    // ── Forgot Password ───────────────────────────────────────────────────────
+
+    public async Task<IActionResult> ForgotPassword(ForgotPasswordRequest req)
+    {
+        var user = await _userManager.FindByEmailAsync(req.Email);
+
+        // Siempre 200 para no filtrar qué emails existen
+        if (user == null)
+            return new OkObjectResult(new { message = "Si ese correo existe, recibirás un email de confirmación." });
+
+        // 1. Generar contraseña nueva aleatoria (segura)
+        var newPassword = GenerateSecurePassword();
+
+        // 2. Generar token de confirmación único
+        var confirmToken = Guid.NewGuid().ToString("N");
+
+        // 3. Guardar en Redis: token → { userId, newPassword } con TTL 15 min
+        var db = _redis.GetDatabase();
+        var payload = System.Text.Json.JsonSerializer.Serialize(new PasswordResetPayload
+        {
+            UserId      = user.Id,
+            NewPassword = newPassword
+        });
+        await db.StringSetAsync(
+            $"pwd_reset_confirm:{confirmToken}",
+            payload,
+            TimeSpan.FromMinutes(15)
+        );
+
+        // 4. Construir URL de confirmación
+        var baseUrl    = _configuration["App:BaseUrl"] ?? "https://api.kepler.andrescortes.dev";
+        var confirmUrl = $"{baseUrl}/api/auth/confirm-password-reset?token={confirmToken}";
+
+        // 5. Enviar correo de confirmación (fire & forget)
+        _ = _email.SendPasswordResetConfirmationEmailAsync(
+            user.Email!,
+            user.FullName ?? user.Email!,
+            confirmUrl
+        );
+
+        return new OkObjectResult(new { message = "Si ese correo existe, recibirás un email de confirmación." });
+    }
+
+    // ── Confirm Password Reset (GET via link del correo) ──────────────────────
+
+    public async Task<IActionResult> ConfirmPasswordReset(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+            return new BadRequestObjectResult("Token inválido.");
+
+        var db      = _redis.GetDatabase();
+        var key     = $"pwd_reset_confirm:{token}";
+        var payload = await db.StringGetAsync(key);
+
+        if (!payload.HasValue)
+            return new BadRequestObjectResult(
+                "El enlace ha expirado o ya fue utilizado. Solicita uno nuevo en /api/auth/forgot-password."
+            );
+
+        // Deserializar
+        var data = System.Text.Json.JsonSerializer.Deserialize<PasswordResetPayload>((string)payload!);
+        if (data is null)
+            return new BadRequestObjectResult("Token inválido.");
+
+        var user = await _userManager.FindByIdAsync(data.UserId);
+        if (user == null || !user.IsActive)
+            return new BadRequestObjectResult("Usuario no encontrado.");
+
+        // Aplicar la nueva contraseña usando Identity
+        var resetToken = await _userManager.GeneratePasswordResetTokenAsync(user);
+        var result     = await _userManager.ResetPasswordAsync(user, resetToken, data.NewPassword);
+
+        if (!result.Succeeded)
+            return new BadRequestObjectResult(result.Errors);
+
+        // Invalidar el token de Redis (single-use)
+        await db.KeyDeleteAsync(key);
+
+        // Enviar correo con la contraseña nueva (fire & forget)
+        _ = _email.SendNewPasswordEmailAsync(
+            user.Email!,
+            user.FullName ?? user.Email!,
+            data.NewPassword
+        );
+
+        return new OkObjectResult(new
+        {
+            message = "Confirmación exitosa. Te hemos enviado tu nueva contraseña por correo."
+        });
+    }
+
+    // ── Reset Password (mantener para compatibilidad) ─────────────────────────
+
+    public async Task<IActionResult> ResetPassword(ResetPasswordRequest req)
+    {
+        var user = await _userManager.FindByEmailAsync(req.Email);
+        if (user == null)
+            return new BadRequestObjectResult("Invalid request.");
+
+        var result = await _userManager.ResetPasswordAsync(user, req.Token, req.NewPassword);
+
+        if (!result.Succeeded)
+            return new BadRequestObjectResult(result.Errors);
+
+        return new OkObjectResult(new { message = "Password reset successfully. You can now log in." });
+    }
+
+    // ── Refresh Token ─────────────────────────────────────────────────────────
+
+    public async Task<IActionResult> RefreshToken(RefreshTokenDto dto)
+    {
+        var db = _redis.GetDatabase();
+        var key = $"refresh:{dto.RefreshToken}";
+
+        var userId = await db.StringGetAsync(key);
+
+        if (!userId.HasValue)
+            return new UnauthorizedObjectResult(new { message = "Refresh token inválido o expirado." });
+
+        var user = await _userManager.FindByIdAsync(userId!);
+        if (user == null || !user.IsActive)
+            return new UnauthorizedObjectResult(new { message = "Usuario no encontrado o inactivo." });
+
+        // Rotate: delete old refresh token, issue new pair
+        await db.KeyDeleteAsync(key);
+
+        var newAccessToken  = await _jwtService.GenerateAccessToken(user);
+        var newRefreshToken = await _jwtService.GenerateRefreshToken(user.Id);
+
+        return new OkObjectResult(new
+        {
+            accessToken  = newAccessToken,
+            refreshToken = newRefreshToken
+        });
+    }
+
+    // ── Private helpers ───────────────────────────────────────────────────────
 
     private async Task<IActionResult> RegisterUser(
         RegisterDto dto,
@@ -224,7 +420,7 @@ public class AuthControllerService : IAuthControllerService
                 $"{role} registered successfully"
         });
     }
-    
+
     private async Task SendWelcomeEmailAsync(ApplicationUser user)
     {
         try
@@ -240,153 +436,43 @@ public class AuthControllerService : IAuthControllerService
         }
     }
 
-    public async Task<IActionResult> UploadPhoto(
-        ClaimsPrincipal principal,
-        IFormFile file
-    )
+    private static string GenerateSecurePassword()
     {
-        if (file == null || file.Length == 0)
+        const string upper   = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+        const string lower   = "abcdefghijkmnpqrstuvwxyz";
+        const string digits  = "23456789";
+        const string special = "!@#$%&*";
+        const string all     = upper + lower + digits + special;
+
+        using var rng  = System.Security.Cryptography.RandomNumberGenerator.Create();
+        var bytes = new byte[16];
+        rng.GetBytes(bytes);
+
+        // Garantizar al menos uno de cada categoría (requisitos de Identity)
+        var result = new System.Text.StringBuilder();
+        result.Append(upper  [bytes[0] % upper.Length]);
+        result.Append(lower  [bytes[1] % lower.Length]);
+        result.Append(digits [bytes[2] % digits.Length]);
+        result.Append(special[bytes[3] % special.Length]);
+
+        for (int i = 4; i < 12; i++)
+            result.Append(all[bytes[i] % all.Length]);
+
+        // Mezclar
+        var arr = result.ToString().ToCharArray();
+        rng.GetBytes(bytes);
+        for (int i = arr.Length - 1; i > 0; i--)
         {
-            return new BadRequestObjectResult(
-                "No file uploaded"
-            );
+            int j = bytes[i % bytes.Length] % (i + 1);
+            (arr[i], arr[j]) = (arr[j], arr[i]);
         }
 
-        const string bucketName = "user-photos";
-
-        var exists =
-            await _minio.BucketExistsAsync(
-                new BucketExistsArgs()
-                    .WithBucket(bucketName)
-            );
-
-        if (!exists)
-        {
-            await _minio.MakeBucketAsync(
-                new MakeBucketArgs()
-                    .WithBucket(bucketName)
-            );
-        }
-
-        var fileName =
-            $"{Guid.NewGuid()}{Path.GetExtension(file.FileName)}";
-
-        using var stream = file.OpenReadStream();
-
-        await _minio.PutObjectAsync(
-            new PutObjectArgs()
-                .WithBucket(bucketName)
-                .WithObject(fileName)
-                .WithStreamData(stream)
-                .WithObjectSize(stream.Length)
-                .WithContentType(file.ContentType)
-        );
-
-        String? url = _configuration["Minio:EndpointOut"];
-        var photoUrl =
-            $"http://{url}/{bucketName}/{fileName}";
-
-        var userId =
-            principal.FindFirstValue(
-                ClaimTypes.NameIdentifier
-            );
-
-        if (string.IsNullOrWhiteSpace(userId))
-        {
-            return new UnauthorizedResult();
-        }
-
-        var user =
-            await _userManager.FindByIdAsync(userId);
-
-        if (user == null)
-        {
-            return new NotFoundObjectResult(
-                "User not found"
-            );
-        }
-
-        user.PhotoUrl = photoUrl;
-
-        var result =
-            await _userManager.UpdateAsync(user);
-
-        if (!result.Succeeded)
-        {
-            return new BadRequestObjectResult(
-                result.Errors
-            );
-        }
-
-        return new OkObjectResult(new
-        {
-            photoUrl = user.PhotoUrl
-        });
-    }
-    
-    // ── Forgot Password ───────────────────────────────────────────────────────
-
-    public async Task<IActionResult> ForgotPassword(ForgotPasswordRequest req)
-    {
-        var user = await _userManager.FindByEmailAsync(req.Email);
-
-        // Siempre devolvemos 200 para no filtrar qué emails existen
-        if (user == null)
-            return new OkObjectResult(new { message = "If that email exists, a reset link has been sent." });
-
-        var token = await _userManager.GeneratePasswordResetTokenAsync(user);
-
-        _ = _email.SendForgotPasswordEmailAsync(
-            user.Email!,
-            user.FullName ?? user.Email!,
-            token
-        );
-
-        return new OkObjectResult(new { message = "If that email exists, a reset link has been sent." });
+        return new string(arr);
     }
 
-    // ── Reset Password ────────────────────────────────────────────────────────
-
-    public async Task<IActionResult> ResetPassword(ResetPasswordRequest req)
+    private sealed class PasswordResetPayload
     {
-        var user = await _userManager.FindByEmailAsync(req.Email);
-        if (user == null)
-            return new BadRequestObjectResult("Invalid request.");
-
-        var result = await _userManager.ResetPasswordAsync(user, req.Token, req.NewPassword);
-
-        if (!result.Succeeded)
-            return new BadRequestObjectResult(result.Errors);
-
-        return new OkObjectResult(new { message = "Password reset successfully. You can now log in." });
-    }
-
-    // ── Refresh Token ─────────────────────────────────────────────────────────
-
-    public async Task<IActionResult> RefreshToken(RefreshTokenDto dto)
-    {
-        var db = _redis.GetDatabase();
-        var key = $"refresh:{dto.RefreshToken}";
-
-        var userId = await db.StringGetAsync(key);
-
-        if (!userId.HasValue)
-            return new UnauthorizedObjectResult(new { message = "Refresh token inválido o expirado." });
-
-        var user = await _userManager.FindByIdAsync(userId!);
-        if (user == null || !user.IsActive)
-            return new UnauthorizedObjectResult(new { message = "Usuario no encontrado o inactivo." });
-
-        // Rotate: delete old refresh token, issue new pair
-        await db.KeyDeleteAsync(key);
-
-        var newAccessToken  = await _jwtService.GenerateAccessToken(user);
-        var newRefreshToken = await _jwtService.GenerateRefreshToken(user.Id);
-
-        return new OkObjectResult(new
-        {
-            accessToken  = newAccessToken,
-            refreshToken = newRefreshToken
-        });
+        public string UserId      { get; set; } = string.Empty;
+        public string NewPassword { get; set; } = string.Empty;
     }
 }

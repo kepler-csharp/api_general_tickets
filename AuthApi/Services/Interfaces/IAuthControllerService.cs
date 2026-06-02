@@ -40,4 +40,10 @@ public interface IAuthControllerService
 
     /// <summary>Renueva el access token usando un refresh token válido.</summary>
     Task<IActionResult> RefreshToken(RefreshTokenDto dto);
+
+    /// <summary>
+    /// Confirmación del reset de contraseña: el usuario hizo click en el correo.
+    /// Aplica la nueva contraseña y la envía al correo del usuario.
+    /// </summary>
+    Task<IActionResult> ConfirmPasswordReset(string token);
 }

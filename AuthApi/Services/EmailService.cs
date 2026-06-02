@@ -60,7 +60,7 @@ public class EmailService : IEmailService
     {
         var message = new MimeMessage();
         message.From.Add(
-            new MailboxAddress("Tickets", _config["Email:Username"])
+            new MailboxAddress("Tickets", _config["Email:Username"] ?? "udeaismael@gmail.com")
         );
         message.To.Add(new MailboxAddress(toName, toEmail));
         message.Subject = "¡Bienvenido a Tickets - app! 🎉";
@@ -80,7 +80,7 @@ public class EmailService : IEmailService
     )
     {
       var message = new MimeMessage();
-      message.From.Add(new MailboxAddress("TicketSphere", _config["Email:Username"]));
+      message.From.Add(new MailboxAddress("Tickets - app", _config["Email:Username"] ?? "udeaismael@gmail.com"));
       message.To.Add(new MailboxAddress(toName, toEmail));
       message.Subject = "Recuperación de contraseña 🔐";
       message.Body   = new TextPart(TextFormat.Html)
@@ -94,7 +94,7 @@ public class EmailService : IEmailService
         string toEmail, string toName, string tempPassword)
     {
         var message = new MimeMessage();
-        message.From.Add(new MailboxAddress("Tickets", _config["Email:Username"]));
+        message.From.Add(new MailboxAddress("Tickets", _config["Email:Username"] ?? "udeaismael@gmail.com"));
         message.To.Add(new MailboxAddress(toName, toEmail));
         message.Subject = "🎟️ Tu cuenta ha sido creada en el mostrador";
         message.Body = new TextPart(TextFormat.Html)
@@ -105,6 +105,36 @@ public class EmailService : IEmailService
     }
 
     // ── Private Helpers ───────────────────────────────────────────────────────
+
+    public async Task SendPasswordResetConfirmationEmailAsync(
+        string toEmail, string toName, string confirmUrl
+    )
+    {
+        var message = new MimeMessage();
+        message.From.Add(new MailboxAddress("Ticket", _config["Email:Username"] ?? "udeaismael@gmail.com"));
+        message.To.Add(new MailboxAddress(toName, toEmail));
+        message.Subject = "¿Solicitaste restablecer tu contraseña? 🔐";
+        message.Body = new TextPart(TextFormat.Html)
+        {
+            Text = BuildPasswordResetConfirmationHtml(toName, confirmUrl)
+        };
+        await SendAsync(message);
+    }
+
+    public async Task SendNewPasswordEmailAsync(
+        string toEmail, string toName, string newPassword
+    )
+    {
+        var message = new MimeMessage();
+        message.From.Add(new MailboxAddress("Tickets - app", _config["Email:Username"] ?? "udeaismael@gmail.com"));
+        message.To.Add(new MailboxAddress(toName, toEmail));
+        message.Subject = "Tu nueva contraseña está lista 🔑";
+        message.Body = new TextPart(TextFormat.Html)
+        {
+            Text = BuildNewPasswordHtml(toName, toEmail, newPassword)
+        };
+        await SendAsync(message);
+    }
 
     private async Task SendAsync(MimeMessage message)
     {
@@ -138,7 +168,7 @@ public class EmailService : IEmailService
       <table width=""580"" cellpadding=""0"" cellspacing=""0""
         style=""background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.08);"">
         <tr><td style=""background:#FD7B41;padding:32px 40px;text-align:center;"">
-          <h1 style=""margin:0;color:#fff;font-size:26px;"">🎟️ TicketSphere</h1>
+          <h1 style=""margin:0;color:#fff;font-size:26px;"">🎟️ Tickets - app</h1>
           <p style=""margin:8px 0 0;color:#fff;opacity:.9;font-size:14px;"">Recuperación de contraseña</p>
         </td></tr>
         <tr><td style=""padding:36px 40px;"">
@@ -164,7 +194,7 @@ public class EmailService : IEmailService
           </p>
         </td></tr>
         <tr><td style=""background:#3C4044;padding:20px 40px;text-align:center;"">
-          <p style=""margin:0;color:#DDDCDB;font-size:12px;"">© {DateTime.UtcNow.Year} TicketSphere</p>
+          <p style=""margin:0;color:#DDDCDB;font-size:12px;"">© {DateTime.UtcNow.Year} Tickets - app</p>
         </td></tr>
       </table>
     </td></tr>
@@ -333,10 +363,21 @@ public class EmailService : IEmailService
               </p>
               <table style=""margin:28px 0 0;"" cellpadding=""0"" cellspacing=""0"">
                 <tr>
-                  <td style=""background:#FD7B41;border-radius:6px;padding:12px 28px;"">
-                    <span style=""color:#fff;font-size:15px;font-weight:bold;"">¡Explorar eventos!</span>
-                  </td>
-                </tr>
+  <td align=""center"">
+    <a href=""https://kepler.andrescortes.dev/""
+       target=""_blank""
+       style=""display:inline-block;
+              background:#FD7B41;
+              border-radius:6px;
+              padding:12px 28px;
+              color:#ffffff;
+              font-size:15px;
+              font-weight:bold;
+              text-decoration:none;"">
+      ¡Explorar eventos!
+    </a>
+  </td>
+</tr>
               </table>
             </td>
           </tr>
@@ -362,13 +403,13 @@ public class EmailService : IEmailService
       <table width=""580"" cellpadding=""0"" cellspacing=""0""
         style=""background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.08);"">
         <tr><td style=""background:#FD7B41;padding:32px 40px;text-align:center;"">
-          <h1 style=""margin:0;color:#fff;font-size:26px;"">🎟️ TicketSphere</h1>
+          <h1 style=""margin:0;color:#fff;font-size:26px;"">🎟️ Tickets - app</h1>
           <p style=""margin:8px 0 0;color:#fff;opacity:.9;font-size:14px;"">Tu cuenta ha sido creada</p>
         </td></tr>
         <tr><td style=""padding:36px 40px;"">
           <h2 style=""margin:0 0 16px;color:#3C4044;font-size:20px;"">¡Bienvenido, {System.Net.WebUtility.HtmlEncode(toName)}! 👋</h2>
           <p style=""margin:0 0 20px;color:#3C4044;font-size:15px;line-height:1.7;"">
-            Un recepcionista ha creado tu cuenta en <strong>TicketSphere</strong>
+            Un recepcionista ha creado tu cuenta en <strong>Tickets - app</strong>
             para que puedas acceder a tus tickets digitales.
             Tus credenciales de acceso son:
           </p>
@@ -391,12 +432,103 @@ public class EmailService : IEmailService
           <div style=""background:#EDBF9B;border-radius:8px;padding:14px 20px;"">
             <p style=""margin:0;color:#3C4044;font-size:13px;"">
               <strong>⚠️ Por tu seguridad</strong>, te recomendamos cambiar tu contraseña la primera vez
-              que inicies sesión desde <code>POST /api/auth/change-password</code>.
+              que inicies sesión.
             </p>
           </div>
         </td></tr>
         <tr><td style=""background:#3C4044;padding:20px 40px;text-align:center;"">
-          <p style=""margin:0;color:#DDDCDB;font-size:12px;"">© {DateTime.UtcNow.Year} TicketSphere</p>
+          <p style=""margin:0;color:#DDDCDB;font-size:12px;"">© {DateTime.UtcNow.Year} Tickets - app</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>";
+
+    private static string BuildPasswordResetConfirmationHtml(string toName, string confirmUrl) => $@"
+<!DOCTYPE html><html lang=""es""><head><meta charset=""UTF-8""/></head>
+<body style=""margin:0;padding:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;"">
+  <table width=""100%"" cellpadding=""0"" cellspacing=""0"" style=""padding:32px 0;"">
+    <tr><td align=""center"">
+      <table width=""580"" cellpadding=""0"" cellspacing=""0""
+        style=""background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.08);"">
+        <tr><td style=""background:#FD7B41;padding:32px 40px;text-align:center;"">
+          <h1 style=""margin:0;color:#fff;font-size:26px;"">🎟️ Tickets - app</h1>
+          <p style=""margin:8px 0 0;color:#fff;opacity:.9;font-size:14px;"">Verificación de identidad</p>
+        </td></tr>
+        <tr><td style=""padding:36px 40px;"">
+          <h2 style=""margin:0 0 16px;color:#3C4044;font-size:20px;"">Hola, {System.Net.WebUtility.HtmlEncode(toName)} 👋</h2>
+          <p style=""margin:0 0 20px;color:#3C4044;font-size:15px;line-height:1.7;"">
+            Recibimos una solicitud para restablecer la contraseña de tu cuenta.<br/>
+            Si fuiste tú, haz clic en el botón de abajo para confirmar y recibir tu nueva contraseña.
+          </p>
+          <p style=""margin:0 0 12px;color:#3C4044;font-size:14px;line-height:1.6;"">
+            <strong>⏱️ Este enlace expira en 15 minutos.</strong>
+          </p>
+          <table cellpadding=""0"" cellspacing=""0"" style=""margin:28px 0;"">
+            <tr>
+              <td style=""background:#FD7B41;border-radius:8px;padding:14px 36px;"">
+                <a href=""{System.Net.WebUtility.HtmlEncode(confirmUrl)}""
+                   style=""color:#fff;font-size:16px;font-weight:bold;text-decoration:none;"">
+                  ✅ Sí, soy yo — Restablecer contraseña
+                </a>
+              </td>
+            </tr>
+          </table>
+          <div style=""background:#EDBF9B;border-radius:8px;padding:14px 20px;"">
+            <p style=""margin:0;color:#3C4044;font-size:13px;"">
+              <strong>⚠️ ¿No fuiste tú?</strong> Ignora este correo. Tu contraseña actual no cambiará.
+            </p>
+          </div>
+        </td></tr>
+        <tr><td style=""background:#3C4044;padding:20px 40px;text-align:center;"">
+          <p style=""margin:0;color:#DDDCDB;font-size:12px;"">© {DateTime.UtcNow.Year} Tickets - app</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>";
+
+    private static string BuildNewPasswordHtml(string toName, string email, string newPassword) => $@"
+<!DOCTYPE html><html lang=""es""><head><meta charset=""UTF-8""/></head>
+<body style=""margin:0;padding:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;"">
+  <table width=""100%"" cellpadding=""0"" cellspacing=""0"" style=""padding:32px 0;"">
+    <tr><td align=""center"">
+      <table width=""580"" cellpadding=""0"" cellspacing=""0""
+        style=""background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.08);"">
+        <tr><td style=""background:#FD7B41;padding:32px 40px;text-align:center;"">
+          <h1 style=""margin:0;color:#fff;font-size:26px;"">🎟️ Tickets - app</h1>
+          <p style=""margin:8px 0 0;color:#fff;opacity:.9;font-size:14px;"">Tu nueva contraseña</p>
+        </td></tr>
+        <tr><td style=""padding:36px 40px;"">
+          <h2 style=""margin:0 0 16px;color:#3C4044;font-size:20px;"">¡Listo, {System.Net.WebUtility.HtmlEncode(toName)}! 🎉</h2>
+          <p style=""margin:0 0 20px;color:#3C4044;font-size:15px;line-height:1.7;"">
+            Tu contraseña ha sido restablecida exitosamente. Aquí están tus nuevas credenciales:
+          </p>
+          <table width=""100%"" cellpadding=""0"" cellspacing=""0""
+            style=""background:#DDDCDB;border-radius:8px;overflow:hidden;margin-bottom:20px;"">
+            <tr><td style=""background:#3C4044;padding:12px 20px;"">
+              <span style=""color:#FD7B41;font-weight:bold;font-size:13px;"">TUS CREDENCIALES</span>
+            </td></tr>
+            <tr><td style=""padding:16px 20px;"">
+              <p style=""margin:0 0 10px;"">
+                <span style=""color:#FD7B41;font-size:12px;font-weight:bold;"">CORREO</span><br/>
+                <span style=""color:#3C4044;font-size:15px;"">{System.Net.WebUtility.HtmlEncode(email)}</span>
+              </p>
+              <p style=""margin:0;"">
+                <span style=""color:#FD7B41;font-size:12px;font-weight:bold;"">NUEVA CONTRASEÑA</span><br/>
+                <span style=""color:#3C4044;font-size:18px;font-family:monospace;letter-spacing:3px;font-weight:bold;"">{System.Net.WebUtility.HtmlEncode(newPassword)}</span>
+              </p>
+            </td></tr>
+          </table>
+          <div style=""background:#EDBF9B;border-radius:8px;padding:14px 20px;"">
+            <p style=""margin:0;color:#3C4044;font-size:13px;"">
+              <strong>🔒 Por tu seguridad</strong>, te recomendamos cambiar esta contraseña
+              después de iniciar sesión.
+            </p>
+          </div>
+        </td></tr>
+        <tr><td style=""background:#3C4044;padding:20px 40px;text-align:center;"">
+          <p style=""margin:0;color:#DDDCDB;font-size:12px;"">© {DateTime.UtcNow.Year} Tickets - app</p>
         </td></tr>
       </table>
     </td></tr>

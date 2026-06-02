@@ -104,6 +104,15 @@ public class AuthController : ControllerBase
     [HttpPost("forgot-password")]
     public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequest req)
         => await _service.ForgotPassword(req);
+
+    /// <summary>
+    /// El usuario hace click en el link del correo de confirmación.
+    /// Aplica la nueva contraseña y la envía por correo al usuario.
+    /// </summary>
+    [AllowAnonymous]
+    [HttpGet("confirm-password-reset")]
+    public async Task<IActionResult> ConfirmPasswordReset([FromQuery] string token)
+        => await _service.ConfirmPasswordReset(token);
     
     /// <summary>Restablece la contraseña con el token recibido por correo.</summary>
     [AllowAnonymous]
