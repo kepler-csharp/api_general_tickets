@@ -10,4 +10,7 @@ public interface IShowtimeService
     Task<ShowtimeDto?> GetByIdAsync(int id);
     Task<ShowtimeDto> CreateAsync(CreateShowtimeRequest request);
     Task<List<SeatDto>> GetSeatsAsync(int showtimeId);
+    Task<ShowtimeDto?> UpdateAsync(int id, UpdateShowtimeRequest request);
+    Task<bool> DeleteAsync(int id);
+    Task<ShowtimeDto?> SetActiveAsync(int id, bool active);
 }

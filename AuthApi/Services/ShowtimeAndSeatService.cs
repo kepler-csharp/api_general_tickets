@@ -15,17 +15,15 @@ public class ShowtimeService : IShowtimeService
 {
     private readonly AppDbContext _db;
     public ShowtimeService(AppDbContext db) => _db = db;
-    
+
     private static TimeZoneInfo GetColombiaTimeZone()
     {
         try
         {
-            // Windows
             return TimeZoneInfo.FindSystemTimeZoneById("SA Pacific Standard Time");
         }
         catch
         {
-            // Linux / Docker / Kubernetes
             return TimeZoneInfo.FindSystemTimeZoneById("America/Bogota");
         }
     }
@@ -33,10 +31,8 @@ public class ShowtimeService : IShowtimeService
     private static DateTime ToColombiaTime(DateTime utcDate)
     {
         var tz = GetColombiaTimeZone();
-
         return TimeZoneInfo.ConvertTimeFromUtc(
-            DateTime.SpecifyKind(utcDate, DateTimeKind.Utc),
-            tz);
+            DateTime.SpecifyKind(utcDate, DateTimeKind.Utc), tz);
     }
 
     public async Task<PagedResult<ShowtimeDto>> GetAllAsync(int page, int pageSize, int? eventId)
@@ -88,6 +84,62 @@ public class ShowtimeService : IShowtimeService
         return ToDto(showtime);
     }
 
+    public async Task<ShowtimeDto?> UpdateAsync(int id, UpdateShowtimeRequest r)
+    {
+        var showtime = await _db.Showtimes
+            .Include(x => x.Event)
+            .Include(x => x.Seats)
+            .FirstOrDefaultAsync(x => x.Id == id);
+
+        if (showtime == null) return null;
+
+        if (r.StartTime.HasValue)
+        {
+            var ev = await _db.Events.FindAsync(showtime.EventId);
+            showtime.StartTime = r.StartTime.Value;
+            if (ev != null)
+                showtime.EndTime = r.StartTime.Value.AddMinutes(ev.DurationMinutes);
+        }
+
+        if (r.BasePrice.HasValue)
+            showtime.BasePrice = r.BasePrice.Value;
+
+        await _db.SaveChangesAsync();
+        return ToDto(showtime);
+    }
+
+    public async Task<bool> DeleteAsync(int id)
+    {
+        var showtime = await _db.Showtimes
+            .Include(x => x.Seats)
+            .FirstOrDefaultAsync(x => x.Id == id);
+
+        if (showtime == null) return false;
+
+        var hasSoldSeats = showtime.Seats.Any(s => s.Status == SeatStatus.Sold);
+        if (hasSoldSeats)
+            throw new InvalidOperationException(
+                "Cannot delete a showtime that has sold tickets.");
+
+        _db.Showtimes.Remove(showtime);
+        await _db.SaveChangesAsync();
+        return true;
+    }
+
+    public async Task<ShowtimeDto?> SetActiveAsync(int id, bool active)
+    {
+        var showtime = await _db.Showtimes
+            .Include(x => x.Event)
+            .Include(x => x.Seats)
+            .FirstOrDefaultAsync(x => x.Id == id);
+
+        if (showtime == null) return null;
+
+        showtime.Status = active ? ShowtimeStatus.Active : ShowtimeStatus.Cancelled;
+        await _db.SaveChangesAsync();
+        return ToDto(showtime);
+    }
+
     public async Task<List<SeatDto>> GetSeatsAsync(int showtimeId)
     {
         var seats = await _db.Seats
@@ -98,13 +150,12 @@ public class ShowtimeService : IShowtimeService
 
         return seats.Select(s => new SeatDto
         {
-            Id = s.Id,
-            Row = s.Row,
+            Id     = s.Id,
+            Row    = s.Row,
             Number = s.Number,
-            Label = s.Row + s.Number.ToString(),
-            Type = s.Type,
+            Label  = s.Row + s.Number.ToString(),
+            Type   = s.Type,
             Status = s.Status,
-
             ReservedUntil = s.ReservedUntil.HasValue
                 ? ToColombiaTime(s.ReservedUntil.Value)
                 : null
@@ -113,11 +164,15 @@ public class ShowtimeService : IShowtimeService
 
     private static ShowtimeDto ToDto(Showtime s) => new()
     {
-        Id = s.Id, EventId = s.EventId, EventName = s.Event?.Name ?? "",
-        StartTime = s.StartTime, EndTime = s.EndTime, BasePrice = s.BasePrice,
-        Status = s.Status,
+        Id             = s.Id,
+        EventId        = s.EventId,
+        EventName      = s.Event?.Name ?? "",
+        StartTime      = s.StartTime,
+        EndTime        = s.EndTime,
+        BasePrice      = s.BasePrice,
+        Status         = s.Status,
         AvailableSeats = s.Seats.Count(x => x.Status == SeatStatus.Available),
-        TotalSeats = s.Seats.Count
+        TotalSeats     = s.Seats.Count
     };
 }
 
@@ -133,12 +188,10 @@ public class SeatService : ISeatService
     {
         try
         {
-            // Windows
             return TimeZoneInfo.FindSystemTimeZoneById("SA Pacific Standard Time");
         }
         catch
         {
-            // Linux / Docker / Kubernetes
             return TimeZoneInfo.FindSystemTimeZoneById("America/Bogota");
         }
     }
@@ -146,34 +199,28 @@ public class SeatService : ISeatService
     private static DateTime ToColombiaTime(DateTime utcDate)
     {
         var tz = GetColombiaTimeZone();
-
         return TimeZoneInfo.ConvertTimeFromUtc(
-            DateTime.SpecifyKind(utcDate, DateTimeKind.Utc),
-            tz);
+            DateTime.SpecifyKind(utcDate, DateTimeKind.Utc), tz);
     }
 
     public SeatService(AppDbContext db, IConnectionMultiplexer redis)
     {
-        _db = db;
+        _db    = db;
         _redis = redis;
     }
 
     public async Task<ReservationResult> ReserveAsync(string userId, ReserveSeatsRequest request)
     {
-        var redisDb = _redis.GetDatabase();
-        var lockKeys = request.SeatIds.Select(id => $"seat_lock:{id}").ToList();
+        var redisDb     = _redis.GetDatabase();
+        var lockKeys    = request.SeatIds.Select(id => $"seat_lock:{id}").ToList();
         var acquiredKeys = new List<string>();
 
         try
         {
-            // Acquire a short Redis lock per seat to prevent race conditions
             foreach (var key in lockKeys)
             {
                 var acquired = await redisDb.StringSetAsync(
-                    key,
-                    userId,
-                    TimeSpan.FromSeconds(10),
-                    When.NotExists);
+                    key, userId, TimeSpan.FromSeconds(10), When.NotExists);
 
                 if (!acquired)
                     return new ReservationResult
@@ -186,17 +233,11 @@ public class SeatService : ISeatService
             }
 
             var seats = await _db.Seats
-                .Where(s =>
-                    request.SeatIds.Contains(s.Id) &&
-                    s.ShowtimeId == request.ShowtimeId)
+                .Where(s => request.SeatIds.Contains(s.Id) && s.ShowtimeId == request.ShowtimeId)
                 .ToListAsync();
 
             if (seats.Count != request.SeatIds.Count)
-                return new ReservationResult
-                {
-                    Success = false,
-                    Message = "Some seats were not found."
-                };
+                return new ReservationResult { Success = false, Message = "Some seats were not found." };
 
             var unavailable = seats.Where(s =>
                 s.Status == SeatStatus.Sold ||
@@ -212,16 +253,12 @@ public class SeatService : ISeatService
                     Message = $"{unavailable.Count} seat(s) are no longer available."
                 };
 
-            // Guardar SIEMPRE UTC
             var expiresAtUtc = DateTime.UtcNow.Add(ReservationTtl);
 
             foreach (var seat in seats)
             {
-                seat.Status = SeatStatus.Reserved;
-
-                // UTC en DB
-                seat.ReservedUntil = expiresAtUtc;
-
+                seat.Status          = SeatStatus.Reserved;
+                seat.ReservedUntil   = expiresAtUtc;
                 seat.ReservedByUserId = userId;
             }
 
@@ -229,12 +266,10 @@ public class SeatService : ISeatService
 
             return new ReservationResult
             {
-                Success = true,
-                Message = "Seats reserved. You have 5 minutes to complete purchase.",
-                ReservedSeatIds = seats.Select(s => s.Id).ToList(),
-
-                // SOLO convertir para frontend/cliente
-                ExpiresAt = ToColombiaTime(expiresAtUtc)
+                Success          = true,
+                Message          = "Seats reserved. You have 5 minutes to complete purchase.",
+                ReservedSeatIds  = seats.Select(s => s.Id).ToList(),
+                ExpiresAt        = ToColombiaTime(expiresAtUtc)
             };
         }
         finally
@@ -255,8 +290,8 @@ public class SeatService : ISeatService
 
         foreach (var seat in seats)
         {
-            seat.Status = SeatStatus.Available;
-            seat.ReservedUntil = null;
+            seat.Status           = SeatStatus.Available;
+            seat.ReservedUntil    = null;
             seat.ReservedByUserId = null;
         }
 
